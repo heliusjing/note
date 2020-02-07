@@ -15,3 +15,7 @@
   *   [源码分析系列.md](04-interviewGuide/源码分析系列.md) 
 * javaSE
   *  [Java线程池解析.md](03-javaSE/Java线程池解析.md) 
+  *   [Java线程池解析(二).md](03-javaSE/Java线程池解析(二).md) 
+  *   [Thread类的interrupt方法详解.md](03-javaSE/Thread类的interrupt方法详解.md) 
+  *   [并发编程之原子类.md](03-javaSE\并发编程之原子类.md) 
+
