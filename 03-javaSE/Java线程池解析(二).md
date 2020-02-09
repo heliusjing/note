@@ -120,3 +120,112 @@ private static final int TERMINATED =  3 << COUNT_BITS;      // 01100000 ... ...
 
 ---
 
+## 浅谈：newSingleThreadExecutor
+
+上一篇文章中，我们简单的介绍过`newSingleThreadExecutor`
+
+这是JDK为我们内置的一个单线程的线程池
+
+通过`Executors`工具类来创建
+
+```java
+    public static ExecutorService newSingleThreadExecutor(ThreadFactory threadFactory) {
+        return new FinalizableDelegatedExecutorService
+            (new ThreadPoolExecutor(1, 1,
+                                    0L, TimeUnit.MILLISECONDS,
+                                    new LinkedBlockingQueue<Runnable>(),
+                                    threadFactory));
+    }
+```
+
+:question:<font color='red'>为啥返回的是`FinalizableDelegatedExecutorService`类呢？？？</font>
+
+考虑这样一个问题：
+
+创建一个单线程的线程池与`Executors.newFixedThreadPool(1)`有什么区别呢？
+
+:angel:
+
+返回的`FinalizableDelegatedExecutorService`
+
+```java
+    static class FinalizableDelegatedExecutorService
+        extends DelegatedExecutorService {
+        FinalizableDelegatedExecutorService(ExecutorService executor) {
+            super(executor);
+        }
+        protected void finalize() {
+            super.shutdown();
+        }
+    }
+//继承自DelegatedExecutorService
+
+    static class DelegatedExecutorService extends AbstractExecutorService {
+        //持有一个线程池的引用
+        private final ExecutorService e;
+        DelegatedExecutorService(ExecutorService executor) { e = executor; }
+        //可以看到调用的都是ExecutorService中的方法
+        public void execute(Runnable command) { e.execute(command); }
+        public void shutdown() { e.shutdown(); }
+        public List<Runnable> shutdownNow() { return e.shutdownNow(); }
+        public boolean isShutdown() { return e.isShutdown(); }
+        public boolean isTerminated() { return e.isTerminated(); }
+        public boolean awaitTermination(long timeout, TimeUnit unit)
+            throws InterruptedException {
+            return e.awaitTermination(timeout, unit);
+        }
+        public Future<?> submit(Runnable task) {
+            return e.submit(task);
+        }
+        public <T> Future<T> submit(Callable<T> task) {
+            return e.submit(task);
+        }
+        public <T> Future<T> submit(Runnable task, T result) {
+            return e.submit(task, result);
+        }
+        public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks)
+            throws InterruptedException {
+            return e.invokeAll(tasks);
+        }
+        public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks,
+                                             long timeout, TimeUnit unit)
+            throws InterruptedException {
+            return e.invokeAll(tasks, timeout, unit);
+        }
+        public <T> T invokeAny(Collection<? extends Callable<T>> tasks)
+            throws InterruptedException, ExecutionException {
+            return e.invokeAny(tasks);
+        }
+        public <T> T invokeAny(Collection<? extends Callable<T>> tasks,
+                               long timeout, TimeUnit unit)
+            throws InterruptedException, ExecutionException, TimeoutException {
+            return e.invokeAny(tasks, timeout, unit);
+        }
+    }
+```
+
+这里可以看出， 这是一个典型的`装饰者设计模式`
+
+其作用：其返回的`FinalizableDelegatedExecutorService`类，只能调用部分方法，即上图中的方法，
+
+但`newFixedThreadPool`返回的是ThreadPoolExecutor类。对比下就可以发现方法的数量不同。
+
+**比如**：如果是`Executors.newFixedThreadPool(1)`
+
+我们可以调用java.util.concurrent.ThreadPoolExecutor#setCorePoolSize这个方法改变线程池中线程的数量。
+
+但是`newSingleThreadExecutor`没有这个方法，就保证了线程数量不会变更改。
+
+:question:<font color='red'>既然是单个线程的线程池，为什么我们不走代码中直接创建一个新线程来执行任务呢，不也是串行的么？</font>
+
+**答：**自己创建一个单线程串行执行任务，如果任务执行失败而终止那么没有任何补救措施，而线程池还会新建一
+个线程，保证池的正常工作
+
+这里可以参考链接：
+
+**[一个线程池中的线程异常了，那么线程池会怎么处理这个线程?](https://www.jianshu.com/p/40e8f4ccc796)**
+
+
+
+---
+
