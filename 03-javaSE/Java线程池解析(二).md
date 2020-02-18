@@ -229,3 +229,200 @@ private static final int TERMINATED =  3 << COUNT_BITS;      // 01100000 ... ...
 
 ---
 
+## 线程池异常处理
+
+在使用线程池处理任务的时候，任务代码可能抛出RuntimeException，抛出异常后，线程池可能捕获它，也可能创建一个新的线程来代替异常的线程，我们可能无法感知任务出现了异常，因此我们需要考虑线程池异常情况。
+
+### 当提交新任务时，异常如何处理?
+
+我们先来看一段代码：使用`submit`方法提交任务
+
+```java
+       ExecutorService threadPool = Executors.newFixedThreadPool(5);
+        for (int i = 0; i < 5; i++) {
+            threadPool.submit(() -> {
+                System.out.println("current thread name" + Thread.currentThread().getName());
+                Object object = null;
+                System.out.print("result## "+object.toString());
+            });
+        }
+
+```
+
+显然，这段代码会有异常，我们再来看看执行结果
+
+
+
+![img](Java线程池解析(二).assets/16bee347085e360b)
+
+核心线程不会销毁，所以虚拟机进程不会销毁
+
+虽然没有结果输出，但是没有抛出异常，所以我们无法感知任务出现了异常
+
+所以需要添加try/catch。 如下图：
+
+![img](Java线程池解析(二).assets/16bee41a1dfeef91)
+
+OK，线程的异常处理，**我们可以直接try...catch捕获。**
+
+这相当于我们手动在**任务中**进行了异常处理
+
+### 线程池exec.submit(runnable)的执行流程
+
+通过debug上面有异常的submit方法（**建议大家也去debug看一下,图上的每个方法内部是我打断点的地方**），处理有异常submit方法的主要执行流程图：
+
+
+
+![img](Java线程池解析(二).assets/16bef895fec0d45b)
+
+
+
+```java
+  //构造feature对象
+  /**
+     * @throws RejectedExecutionException {@inheritDoc}
+     * @throws NullPointerException       {@inheritDoc}
+     */
+    public Future<?> submit(Runnable task) {
+        if (task == null) throw new NullPointerException();
+        RunnableFuture<Void> ftask = newTaskFor(task, null);
+        execute(ftask);
+        return ftask;
+    }
+     protected <T> RunnableFuture<T> newTaskFor(Runnable runnable, T value) {
+        return new FutureTask<T>(runnable, value);
+    }
+     public FutureTask(Runnable runnable, V result) {
+        this.callable = Executors.callable(runnable, result);
+        this.state = NEW;       // ensure visibility of callable
+    }
+       public static <T> Callable<T> callable(Runnable task, T result) {
+        if (task == null)
+            throw new NullPointerException();
+        return new RunnableAdapter<T>(task, result);
+    }
+    //线程池执行
+     public void execute(Runnable command) {
+        if (command == null)
+            throw new NullPointerException();
+               int c = ctl.get();
+        if (workerCountOf(c) < corePoolSize) {
+            if (addWorker(command, true))
+                return;
+            c = ctl.get();
+        }
+        if (isRunning(c) && workQueue.offer(command)) {
+            int recheck = ctl.get();
+            if (! isRunning(recheck) && remove(command))
+                reject(command);
+            else if (workerCountOf(recheck) == 0)
+                addWorker(null, false);
+        }
+        else if (!addWorker(command, false))
+            reject(command);
+    }
+    //捕获异常
+    public void run() {
+        if (state != NEW ||
+            !UNSAFE.compareAndSwapObject(this, runnerOffset,
+                                         null, Thread.currentThread()))
+            return;
+        try {
+            Callable<V> c = callable;
+            if (c != null && state == NEW) {
+                V result;
+                boolean ran;
+                try {
+                    result = c.call();
+                    ran = true;
+                } catch (Throwable ex) {
+                    result = null;
+                    ran = false;
+                    setException(ex);
+                }
+                if (ran)
+                    set(result);
+            }
+        } finally {
+            // runner must be non-null until state is settled to
+            // prevent concurrent calls to run()
+            runner = null;
+            // state must be re-read after nulling runner to prevent
+            // leaked interrupts
+            int s = state;
+            if (s >= INTERRUPTING)
+                handlePossibleCancellationInterrupt(s);
+        }
+```
+
+通过以上分析，**submit执行的任务，可以通过Future对象的get方法接收抛出的异常，再进行处理。** 我们再通过一个demo，看一下Future对象的get方法处理异常的姿势，如下图：
+
+
+
+![img](Java线程池解析(二).assets/16bef9bb609bbe31)
+
+
+
+### 其他两种处理线程池异常方案
+
+除了以上**1.在任务代码try/catch捕获异常，2.通过Future对象的get方法接收抛出的异常，再处理**两种方案外，还有以上两种方案：
+
+#### 3.为工作者线程设置UncaughtExceptionHandler，在uncaughtException方法中处理异常
+
+我们直接看这样实现的正确姿势：
+
+```java
+ExecutorService threadPool = Executors.newFixedThreadPool(1, r -> {
+            Thread t = new Thread(r);
+            t.setUncaughtExceptionHandler(
+                    (t1, e) -> {
+                        System.out.println(t1.getName() + "线程抛出的异常"+e);
+                    });
+            return t;
+           });
+        threadPool.execute(()->{
+            Object object = null;
+            System.out.print("result## " + object.toString());
+        });
+```
+
+运行结果：
+
+![img](Java线程池解析(二).assets/16bf00f61b40c749)
+
+
+
+#### 4.重写ThreadPoolExecutor的afterExecute方法，处理传递的异常引用
+
+这是jdk文档的一个demo：
+
+```java
+class ExtendedExecutor extends ThreadPoolExecutor {
+    // 这可是jdk文档里面给的例子。。
+    protected void afterExecute(Runnable r, Throwable t) {
+        super.afterExecute(r, t);
+        if (t == null && r instanceof Future<?>) {
+            try {
+                Object result = ((Future<?>) r).get();
+            } catch (CancellationException ce) {
+                t = ce;
+            } catch (ExecutionException ee) {
+                t = ee.getCause();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt(); // ignore/reset
+            }
+        }
+        if (t != null)
+            System.out.println(t);
+    }
+}}
+```
+
+### 因此，被问到线程池异常处理，如何回答？
+
+
+
+![img](Java线程池解析(二).assets/16bec33ca5559c93-1581247684719)
+
+---
+
