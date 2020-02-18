@@ -27,7 +27,7 @@
   *   [Thread类的interrupt方法详解.md](03-javaSE/Thread类的interrupt方法详解.md) 
   *   [并发编程之原子类.md](03-javaSE\并发编程之原子类.md) 
   *    [线程池饥饿问题.md](03-javaSE/线程池饥饿问题.md) 
-  *     [谈谈CopyOnWriteArrayList.md](03-javaSE/谈谈CopyOnWriteArrayList.md) 
+  *      [谈谈CopyOnWriteArrayList.md](03-javaSE/谈谈CopyOnWriteArrayList.md) 
   
 * **数据结构与算法**
 
